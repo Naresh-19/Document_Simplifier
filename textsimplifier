@@ -1,0 +1,124 @@
+import openai
+import os
+from flask import Flask, render_template_string, request
+from werkzeug.utils import secure_filename
+import flask
+
+openai.api_key = os.environ['OPENAI_API_KEY']
+
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'txt'}
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+
+def allowed_file(filename):
+  return '.' in filename and filename.rsplit(
+      '.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def generate_tutorial(components):
+  response = openai.chat.completions.create(
+      model="gpt-3.5-turbo",
+      messages=[{
+          "role": "system",
+          "content": "You are a helpful assistant"
+      }, {
+          "role":
+          "user",
+          "content":
+          f"Simplify the complex words in the sentence into a simpler sentence without changing the meaning and reducing more words: {components}"
+      }])
+  return response.choices[0].message.content
+
+
+def process_uploaded_file(file):
+  if file and allowed_file(file.filename):
+    filename = secure_filename(file.filename)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(file_path)
+    with open(file_path, 'r') as f:
+      components = f.read()
+    return components
+  else:
+    return None
+
+
+@app.route('/', methods=['GET', 'POST'])
+def hello():
+  output = ""
+  if request.method == 'POST':
+    if 'file' in request.files:
+      file = request.files['file']
+      components = process_uploaded_file(file)
+      if components:
+        output = generate_tutorial(components)
+
+  return render_template_string('''
+ <!DOCTYPE html>
+ <html>
+ <head>
+  <title>Text Simplifier</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script>
+    async function generateTutorial() {
+      const output = document.querySelector('#output');
+      output.textContent = 'Generating...';
+      const formData = new FormData();
+      formData.append('file', document.getElementById('file').files[0]);
+      const response = await fetch('/generate', {
+        method: 'POST',
+        body: formData
+      });
+      const newOutput = await response.text();
+      output.textContent = newOutput;
+    }
+
+    function copyToClipboard() {
+      const output = document.querySelector('#output');
+      const textarea = document.createElement('textarea');
+      textarea.value = output.textContent;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      alert('Copied to clipboard');
+    }
+  </script>
+ </head>
+ <body>
+  <div class="container">
+   <h1 class="my-4">TEXT SIMPLIFIER</h1>
+   <form id="tutorial-form" onsubmit="event.preventDefault();" class="mb-3" method="post" enctype="multipart/form-data">
+    <div class="mb-3">
+     <label for="file" class="form-label">File Upload:</label>
+     <input class="form-control" type="file" id="file" name="file">
+    </div>
+    <button type="button" class="btn btn-primary" onclick="generateTutorial()">Simplify</button>
+   </form>
+   <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+     Output:
+     <button class="btn btn-secondary btn-sm" onclick="copyToClipboard()">Copy</button>
+    </div>
+    <div class="card-body">
+     <pre id="output" class="mb-0" style="white-space: pre-wrap;">{{ output }}</pre>
+    </div>
+   </div>
+  </div>
+ </body>
+ </html>
+ ''',
+                                output=output)
+
+
+@app.route('/generate', methods=['POST'])
+def generate():
+  components = request.files['file'].read().decode("utf-8")
+  output = generate_tutorial(components)
+  return flask.Response(output)
+
+
+if __name__ == '__main__':
+  app.run(host='0.0.0.0', port=8080)
